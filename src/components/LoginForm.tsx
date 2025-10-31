@@ -6,6 +6,7 @@ export const LoginForm: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [remember, setRemember] = useState(false);
   const { login, loading } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -13,7 +14,7 @@ export const LoginForm: React.FC = () => {
     setError('');
 
     try {
-      await login(email, password);
+      await login(email, password, remember);
     } catch (err) {
       setError('Invalid email or password');
     }
@@ -118,6 +119,13 @@ export const LoginForm: React.FC = () => {
               </div>
               <p className="text-xs text-gray-500 mt-2">Use the prefilled password per account.</p>
             </div>
+          </div>
+
+          <div className="flex items-center justify-between mt-4">
+            <label className="flex items-center text-sm">
+              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="mr-2" />
+              Remember me (keep session across tabs)
+            </label>
           </div>
         </div>
       </div>

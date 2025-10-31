@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Layout } from '../Layout';
 import { BookOpen, Users, Calendar, MapPin, Clock, QrCode, Eye } from 'lucide-react';
-import { apiFetch } from '../../utils/api';
+import { apiFetch, getAuthToken } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface Course {
@@ -15,7 +15,7 @@ interface Course {
 interface Session {
   id: number;
   class_code: string;
-  course: { code: string; name: string };
+  course: { id: number; code: string; name: string };
   start_time: string;
   lat: number;
   lng: number;
@@ -23,13 +23,16 @@ interface Session {
 }
 
 export const FacultyDashboard: React.FC = () => {
-  const { user } = useAuth();
+  useAuth();
   const [courses, setCourses] = useState<Course[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [selectedCourseId, setSelectedCourseId] = useState<number | null>(null);
   const [submittedCount, setSubmittedCount] = useState<number>(0);
   const [lat, setLat] = useState<number | null>(null);
   const [lng, setLng] = useState<number | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [liveConnected, setLiveConnected] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -101,6 +104,56 @@ export const FacultyDashboard: React.FC = () => {
       setSubmittedCount(0);
     } catch (error) {
       console.error('Error ending session:', error);
+    }
+  };
+
+  const handleViewLive = () => {
+    if (!activeSession) return;
+
+    if (liveConnected && eventSourceRef.current) {
+      // disconnect
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+      setLiveConnected(false);
+      return;
+    }
+
+    const token = getAuthToken();
+    const base = (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_API_URL) ? (import.meta as any).env.VITE_API_URL : '';
+    const url = `${base.replace(/\/$/, '')}/api/sessions/live/${activeSession.id}${token ? `?token=${token}` : ''}`;
+
+    try {
+      const es = new EventSource(url);
+      eventSourceRef.current = es;
+
+      es.addEventListener('attendance', (e: any) => {
+        try {
+          const parsed = JSON.parse(e.data);
+          // increment count for each attendance event; parsed may contain id/student info
+          setSubmittedCount(prev => prev + 1);
+        } catch (err) { console.error('Invalid attendance event', err); }
+      });
+
+      es.addEventListener('sessionEnded', (e: any) => {
+        try {
+          const parsed = JSON.parse(e.data);
+          // session ended by server — update UI
+          setActiveSession(null);
+          setSubmittedCount(0);
+          if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
+          setLiveConnected(false);
+        } catch (err) { console.error('Invalid sessionEnded event', err); }
+      });
+
+      es.onerror = (err) => {
+        console.error('EventSource error', err);
+        if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
+        setLiveConnected(false);
+      };
+
+      setLiveConnected(true);
+    } catch (err) {
+      console.error('Failed to open live view', err);
     }
   };
 
@@ -209,10 +262,38 @@ export const FacultyDashboard: React.FC = () => {
               <div className="text-center">
                 <div className="bg-blue-50 p-6 rounded-lg mb-6">
                   <h4 className="text-xl font-bold text-blue-900 mb-2">Class Code</h4>
-                  <div className="text-4xl font-mono font-bold text-blue-600 tracking-wider">
-                    {activeSession.class_code}
+                  <div className="flex items-center justify-center space-x-4">
+                    <div className="text-4xl font-mono font-bold text-blue-600 tracking-wider select-all" aria-live="polite">{activeSession.class_code}</div>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const code = String(activeSession.class_code);
+                          if (navigator.clipboard && navigator.clipboard.writeText) {
+                            await navigator.clipboard.writeText(code);
+                          } else {
+                            // Fallback for older browsers
+                            const ta = document.createElement('textarea');
+                            ta.value = code;
+                            document.body.appendChild(ta);
+                            ta.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(ta);
+                          }
+                          // transient UI feedback
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 1600);
+                        } catch (err) {
+                          console.error('Copy failed', err);
+                        }
+                      }}
+                      aria-label="Copy class code"
+                      className="ml-2 inline-flex items-center px-3 py-1.5 border border-transparent text-sm leading-4 font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none"
+                    >
+                      Copy Code
+                    </button>
                   </div>
                   <p className="text-sm text-blue-700 mt-2">Share this code with students</p>
+                  {copied && <div className="mt-2 text-sm text-green-600" role="status">Code copied!</div>}
                 </div>
                 
                 <div className="flex items-center justify-center text-green-600 mb-4">
@@ -232,8 +313,8 @@ export const FacultyDashboard: React.FC = () => {
                 </div>
                 
                 <div className="flex space-x-3">
-                  <button className="flex-1 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 transition-colors">
-                    View Live
+                  <button onClick={handleViewLive} className={`flex-1 ${liveConnected ? 'bg-gray-600' : 'bg-green-600'} text-white py-2 px-4 rounded-md hover:opacity-90 transition-colors`}>
+                    {liveConnected ? 'Disconnect Live' : 'View Live'}
                   </button>
                   <button
                     onClick={endSession}

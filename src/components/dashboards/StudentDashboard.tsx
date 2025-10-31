@@ -87,21 +87,31 @@ export const StudentDashboard: React.FC = () => {
 
   const handleSubmitAttendance = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!classCode.trim()) return;
 
     setSubmitting(true);
     try {
       // Use selected course if available
       const courseId = selectedCourseId ?? 1; // fallback to 1 for development
-      
+      // Normalize class code to strip whitespace and non-alphanumeric chars (users may paste extra chars)
+      const cleaned = (classCode || '').toString().replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+      if (!cleaned) {
+        setLastSubmission({ success: false, message: 'Invalid class code. Please check with your instructor.' });
+        setSubmitting(false);
+        return;
+      }
+
       await apiFetch('/api/attendance/submit', {
         method: 'POST',
         body: JSON.stringify({
           courseId,
-          classCode: classCode.trim().toUpperCase(),
+          classCode: cleaned,
           lat: location.latitude,
           lng: location.longitude,
-          deviceInfo: navigator.userAgent
+          deviceInfo: {
+            userAgent: navigator.userAgent,
+            platform: (navigator as any).platform || '',
+            screenSize: typeof window !== 'undefined' ? `${window.screen.width}x${window.screen.height}` : undefined,
+          }
         })
       });
       
@@ -114,8 +124,8 @@ export const StudentDashboard: React.FC = () => {
                   'Failed to submit attendance. Please try again.';
       setLastSubmission({ success: false, message: msg });
     }
-    setSubmitting(false);
-    setClassCode('');
+  setSubmitting(false);
+  setClassCode('');
     
     // Clear message after 5 seconds
     setTimeout(() => setLastSubmission(null), 5000);
@@ -184,7 +194,7 @@ export const StudentDashboard: React.FC = () => {
                   type="text"
                   id="classCode"
                   value={classCode}
-                  onChange={(e) => setClassCode(e.target.value)}
+                  onChange={(e) => setClassCode(e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase())}
                   placeholder="Enter class code from instructor"
                   className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-center text-lg font-mono uppercase"
                   maxLength={6}

@@ -5,6 +5,7 @@ import { validate } from "../middleware/validate";
 import { attendanceSubmitSchema } from "../schemas/attendance.schemas";
 import { rateLimiter } from "../middleware/redisRateLimiter";
 import { AuthenticatedRequest } from "../types";
+import { broadcast } from '../utils/sse';
 
 const router = Router();
 
@@ -51,18 +52,39 @@ router.post("/submit", authenticateToken, rateLimiter({ windowMs: 60000, max: 3,
       return res.status(403).json({ error: 'Only students can submit attendance' });
     }
 
-    const { classCode, lat, lng, deviceInfo } = req.body;
+    const { classCode: rawClassCode, lat, lng, deviceInfo } = req.body;
 
-    // Find active session with the given class code
-    const session = await prisma.class_sessions.findFirst({
+    // Normalize class code: strip non-alphanumeric, remove whitespace, uppercase
+    const classCode = (rawClassCode || '').toString().replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+
+    if (!classCode || classCode.length < 4) {
+      return res.status(400).json({ error: 'Invalid class code format' });
+    }
+
+    // Find active session with the given normalized class code
+    let session = await prisma.class_sessions.findFirst({
       where: { 
-        class_code: classCode.toUpperCase(),
+        class_code: classCode,
         is_active: true 
       },
       include: {
         course: true
       }
     });
+
+    // If exact match failed, try a tolerant search: compare normalized stored codes
+    if (!session) {
+      try {
+        const active = await prisma.class_sessions.findMany({ where: { is_active: true }, include: { course: true } });
+        const normalize = (s: string) => (s || '').toString().replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  const matched = active.find((a: any) => normalize(a.class_code) === classCode);
+        if (matched) {
+          session = matched;
+        }
+      } catch (err) {
+        console.error('Error during tolerant class code lookup', err);
+      }
+    }
     
     if (!session) {
       return res.status(400).json({ error: 'Invalid class code or session not active' });
@@ -124,6 +146,13 @@ router.post("/submit", authenticateToken, rateLimiter({ windowMs: 60000, max: 3,
       }
     });
 
+    // Notify any live viewers that a new attendance record arrived
+    try {
+      broadcast(session.id, 'attendance', { id: attendance.id, student_id: id, submitted_at: attendance.submitted_at });
+    } catch (err) {
+      // non-fatal
+    }
+
     res.status(201).json({
       message: 'Attendance submitted successfully',
       attendance: {
@@ -170,7 +199,7 @@ router.get("/student/:studentId", authenticateToken, async (req: any, res: any) 
 
     res.json(attendance);
   } catch (error) {
-    console.error('Error fetching student attendance:', error);
+    console.error('Error fetching student attendance:', error, (error && (error as any).stack) ? (error as any).stack : 'no-stack');
     res.status(500).json({ error: 'Failed to fetch attendance records' });
   }
 });

@@ -15,6 +15,11 @@ export const sessionEndSchema = z.object({
   sessionId: z.number().int().positive(),
 });
 
+// Params schema when session id is passed as URL param `/end/:id`
+export const sessionEndParamsSchema = z.object({
+  id: z.preprocess((v: any) => (typeof v === 'string' ? parseInt(v, 10) : v), z.number().int().positive()),
+});
+
 // Schema for querying active sessions
 export const activeSessionQuerySchema = z.object({
   courseId: z.number().int().positive().optional(),

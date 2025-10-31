@@ -46,7 +46,8 @@ export interface AttendanceRecord {
 
 export interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string) => Promise<void>;
+  // remember: when true, also persist to localStorage so the session is shared across tabs
+  login: (email: string, password: string, remember?: boolean) => Promise<void>;
   logout: () => void;
   loading: boolean;
 }

@@ -1,5 +1,6 @@
 export function getAuthToken(): string | null {
-  return localStorage.getItem('token');
+  // Prefer sessionStorage (per-tab). Fall back to localStorage to preserve existing "remembered" sessions.
+  return sessionStorage.getItem('token') || localStorage.getItem('token');
 }
 
 export async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {

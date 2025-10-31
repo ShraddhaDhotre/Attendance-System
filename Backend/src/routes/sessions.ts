@@ -2,7 +2,8 @@ import { Router } from "express";
 import { prisma } from "../utils/prisma";
 import jwt from "jsonwebtoken";
 import { validate } from "../middleware/validate";
-import { sessionStartSchema, sessionEndSchema, activeSessionQuerySchema } from "../schemas/session.schemas";
+import { sessionStartSchema, sessionEndSchema, activeSessionQuerySchema, sessionEndParamsSchema } from "../schemas/session.schemas";
+import { broadcast } from '../utils/sse';
 import { rateLimiter } from "../middleware/redisRateLimiter";
 import { AuthenticatedRequest } from "../types";
 
@@ -117,7 +118,8 @@ router.post("/start", authenticateToken, rateLimiter({ windowMs: 60000, max: 5, 
 });
 
 // End a session
-router.post("/end/:id", authenticateToken, validate(sessionEndSchema), async (req: any, res: any) => {
+// Validate the URL param `id` using params schema, then end session
+router.post("/end/:id", authenticateToken, validate(sessionEndParamsSchema, 'params'), async (req: any, res: any) => {
   try {
     const { role, id } = req.user;
     const sessionId = parseInt(req.params.id);
@@ -155,12 +157,47 @@ router.post("/end/:id", authenticateToken, validate(sessionEndSchema), async (re
       }
     });
 
+    // Inform any live viewers this session ended
+    try { broadcast(sessionId, 'sessionEnded', { sessionId }); } catch (err) {}
+    
     res.json(updatedSession);
   } catch (error) {
     console.error('Error ending session:', error);
     res.status(500).json({ error: 'Failed to end session' });
   }
 });
+
+// Server-Sent Events endpoint: clients can subscribe to live updates for a session
+// SSE: clients can subscribe to live updates for a session. EventSource can't send Authorization header,
+// so accept token via query param `?token=` or via Authorization header.
+router.get('/live/:id', (req: any, res: any) => {
+  const sessionId = parseInt(req.params.id, 10);
+
+  const tokenFromQuery = req.query && (req.query.token as string | undefined);
+  const authHeader = req.headers['authorization'];
+  const token = (authHeader && authHeader.split && authHeader.split(' ')[1]) || tokenFromQuery;
+
+  if (!token) return res.status(401).json({ error: 'Access token required for live updates' });
+
+  let user: any = null;
+  try {
+    user = jwt.verify(token, process.env.JWT_SECRET || "dev_jwt_secret_change_me");
+  } catch (err) {
+    return res.status(403).json({ error: 'Invalid or expired token' });
+  }
+
+  // Only faculty or admin can subscribe to live faculty views
+  if (!user || (user.role !== 'FACULTY' && user.role !== 'ADMIN')) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  // Add listener and remove on close
+  const remove = addListenerSafe(sessionId, res);
+  req.on('close', () => remove());
+});
+
+// Helper to avoid importing addListener directly in this file (for readability)
+import { addListener as addListenerSafe } from '../utils/sse';
 
 // Get active sessions
 router.get("/active", authenticateToken, validate(activeSessionQuerySchema, 'query'), async (req: any, res: any) => {

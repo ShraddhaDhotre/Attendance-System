@@ -15,7 +15,7 @@ router.get("/public", async (req: any, res: any) => {
     });
     res.json(courses);
   } catch (error) {
-    console.error('Error fetching public courses:', error);
+    console.error('Error fetching public courses:', error, (error && (error as any).stack) ? (error as any).stack : 'no-stack');
     res.status(500).json({ error: 'Failed to fetch courses' });
   }
 });
