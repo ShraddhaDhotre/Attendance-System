@@ -43,6 +43,8 @@ export const AdminDashboard: React.FC = () => {
   const [newUser, setNewUser] = useState({ email: '', name: '', password: '' });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [users, setUsers] = useState<UserSummary[]>([]);
+  const [reports, setReports] = useState<Array<any>>([]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -74,6 +76,21 @@ export const AdminDashboard: React.FC = () => {
           faculty: uniqueFaculty.size,
           avgAttendance: sessionCount ? (totalAttendance / sessionCount * 100) : 0
         });
+
+        // Try to fetch admin users/reports if token grants access. Fail silently (no crash) if not authorized.
+        try {
+          const adminUsers = await apiFetch('/api/admin/users');
+          if (Array.isArray(adminUsers)) setUsers(adminUsers as UserSummary[]);
+        } catch (err) {
+          // ignore - user might not be admin
+        }
+
+        try {
+          const courseReports = await apiFetch('/api/admin/reports/courses');
+          if (Array.isArray(courseReports)) setReports(courseReports as any[]);
+        } catch (err) {
+          // ignore - user might not be admin
+        }
       } catch (err: any) {
         setError(err.message || 'Failed to load dashboard data');
         console.error('Error fetching dashboard data:', err);
@@ -84,6 +101,32 @@ export const AdminDashboard: React.FC = () => {
 
     fetchData();
   }, []);
+
+  // Fetch users or reports when the corresponding tab is activated
+  useEffect(() => {
+    const load = async () => {
+      if (activeTab === 'users') {
+        try {
+          const res = await apiFetch('/api/admin/users');
+          setUsers(Array.isArray(res) ? (res as UserSummary[]) : []);
+        } catch (err: any) {
+          setError(err.message || 'Failed to load users (admin access required)');
+          setTimeout(() => setError(null), 5000);
+        }
+      }
+      if (activeTab === 'reports') {
+        try {
+          const res = await apiFetch('/api/admin/reports/courses');
+          setReports(Array.isArray(res) ? (res as any[]) : []);
+        } catch (err: any) {
+          setError(err.message || 'Failed to load reports (admin access required)');
+          setTimeout(() => setError(null), 5000);
+        }
+      }
+    };
+
+    load();
+  }, [activeTab]);
 
   const handleAddCourse = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -288,7 +331,80 @@ export const AdminDashboard: React.FC = () => {
             </div>
           </div>
         )}
+        {activeTab === 'users' && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+              <h3 className="text-lg font-medium text-gray-900">Users</h3>
+              <div className="text-sm text-gray-500">Total: {users.length}</div>
+            </div>
+            <div className="p-6 overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {users.map(u => (
+                    <tr key={u.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{u.id}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{u.name}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{u.email}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{u.role}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{(u as any).created_at ? new Date((u as any).created_at).toLocaleDateString() : '-'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <button onClick={async () => {
+                          if (!window.confirm('Delete user?')) return;
+                          try {
+                            await apiFetch(`/api/admin/users/${u.id}`, { method: 'DELETE' });
+                            setUsers(prev => prev.filter(x => x.id !== u.id));
+                          } catch (err: any) {
+                            setError(err.message || 'Failed to delete user');
+                            setTimeout(() => setError(null), 5000);
+                          }
+                        }} className="text-red-600 hover:text-red-900">Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
+        {activeTab === 'reports' && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+              <h3 className="text-lg font-medium text-gray-900">Course Reports</h3>
+              <div className="text-sm text-gray-500">Courses: {reports.length}</div>
+            </div>
+            <div className="p-6 overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Course</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sessions</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Attendance</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {reports.map((r, idx) => (
+                    <tr key={r.courseId || r.id || idx} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{r.code} — {r.name}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{r.sessions ?? r.sessionsCount ?? 0}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{r.attendance ?? r.attendanceCount ?? 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
                     {activeTab === 'courses' && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <div className="p-6 border-b border-gray-200">
