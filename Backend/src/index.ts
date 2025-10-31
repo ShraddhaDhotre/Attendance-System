@@ -8,6 +8,7 @@ import authRouter from "./routes/auth";
 import coursesRouter from "./routes/courses";
 import sessionsRouter from "./routes/sessions";
 import attendanceRouter from "./routes/attendance";
+import adminRouter from "./routes/admin";
 
 const app = express();
 app.use(cors());
@@ -28,6 +29,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/courses", coursesRouter);
 app.use("/api/sessions", sessionsRouter);
 app.use("/api/attendance", attendanceRouter);
+app.use("/api/admin", adminRouter);
 
 // 404 handler
 app.use((req: any, res: any, _next: any) => {
