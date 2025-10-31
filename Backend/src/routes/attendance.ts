@@ -142,13 +142,17 @@ router.post("/submit", authenticateToken, rateLimiter({ windowMs: 60000, max: 3,
               select: { code: true, name: true }
             }
           }
+        },
+        student: {
+          select: { id: true, name: true, email: true }
         }
       }
     });
 
     // Notify any live viewers that a new attendance record arrived
     try {
-      broadcast(session.id, 'attendance', { id: attendance.id, student_id: id, submitted_at: attendance.submitted_at });
+      // Broadcast attendance including basic student info so faculty live view can update without refetch
+      broadcast(session.id, 'attendance', { id: attendance.id, student: attendance.student, submitted_at: attendance.submitted_at, is_verified: attendance.is_verified });
     } catch (err) {
       // non-fatal
     }
@@ -249,3 +253,51 @@ router.get("/session/:sessionId", authenticateToken, async (req: any, res: any) 
 });
 
 export default router;
+
+// New: helper endpoint for faculty to list submissions for a session
+// GET /api/attendance/submissions?sessionId=123
+router.get('/submissions', authenticateToken, async (req: any, res: any) => {
+  try {
+    const { role, id } = req.user;
+    const sessionId = parseInt(req.query.sessionId);
+
+    if (isNaN(sessionId)) {
+      return res.status(400).json({ error: 'sessionId query param is required' });
+    }
+
+    const session = await prisma.class_sessions.findFirst({ where: { id: sessionId }, include: { course: true } });
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    // Only faculty who created the session or admins can fetch submissions
+    if (role === 'FACULTY' && session.created_by !== id) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    if (role !== 'FACULTY' && role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const submissions = await prisma.attendance_records.findMany({
+      where: { session_id: sessionId },
+      include: {
+        student: { select: { id: true, name: true, email: true } }
+      },
+      orderBy: { submitted_at: 'desc' }
+    });
+
+    // Map to a simple shape expected by frontend
+    const mapped = submissions.map((s: any) => ({
+      id: s.id,
+      studentId: s.student.id,
+      studentName: s.student.name,
+      studentEmail: s.student.email,
+      submitted_at: s.submitted_at,
+      is_verified: s.is_verified,
+    }));
+
+    res.json({ sessionId, course: { id: session.course.id, code: session.course.code, name: session.course.name }, submissions: mapped });
+  } catch (error) {
+    console.error('Error fetching submissions:', error);
+    res.status(500).json({ error: 'Failed to fetch submissions' });
+  }
+});

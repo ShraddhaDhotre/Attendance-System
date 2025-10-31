@@ -3,6 +3,7 @@ import { Layout } from '../Layout';
 import { BookOpen, Users, Calendar, MapPin, Clock, QrCode, Eye } from 'lucide-react';
 import { apiFetch, getAuthToken } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
+import AttendanceSubmissions from './AttendanceSubmissions';
 
 interface Course {
   id: number;
@@ -28,12 +29,22 @@ export const FacultyDashboard: React.FC = () => {
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [selectedCourseId, setSelectedCourseId] = useState<number | null>(null);
   const [submittedCount, setSubmittedCount] = useState<number>(0);
+  // submissions list is handled in the dedicated page component; keep count here
   const [lat, setLat] = useState<number | null>(null);
   const [lng, setLng] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [liveConnected, setLiveConnected] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const [view, setView] = useState<'overview' | 'submissions'>(() => (typeof window !== 'undefined' && window.location.pathname.includes('attendance-submissions') ? 'submissions' : 'overview'));
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const onPop = () => {
+      setView(window.location.pathname.includes('attendance-submissions') ? 'submissions' : 'overview');
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   useEffect(() => {
     // Get user's location
@@ -55,6 +66,12 @@ export const FacultyDashboard: React.FC = () => {
         
         setCourses(coursesData);
         
+      {/* Render the dedicated submissions page below the top controls when requested */}
+      {view === 'submissions' && (
+        <div className="mt-6">
+          <AttendanceSubmissions sessionId={activeSession?.id ?? null} />
+        </div>
+      )}
         // Find active session for this faculty
         const myActiveSession = sessionsData.find(session => 
           session.course && coursesData.some(course => course.id === session.course.id)
@@ -126,23 +143,19 @@ export const FacultyDashboard: React.FC = () => {
       const es = new EventSource(url);
       eventSourceRef.current = es;
 
-      es.addEventListener('attendance', (e: any) => {
+      es.addEventListener('attendance', () => {
         try {
-          const parsed = JSON.parse(e.data);
-          // increment count for each attendance event; parsed may contain id/student info
+          // event data received; increment submitted count. Detailed list is fetched in the submissions page.
           setSubmittedCount(prev => prev + 1);
         } catch (err) { console.error('Invalid attendance event', err); }
       });
 
-      es.addEventListener('sessionEnded', (e: any) => {
-        try {
-          const parsed = JSON.parse(e.data);
-          // session ended by server — update UI
-          setActiveSession(null);
-          setSubmittedCount(0);
-          if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
-          setLiveConnected(false);
-        } catch (err) { console.error('Invalid sessionEnded event', err); }
+      es.addEventListener('sessionEnded', () => {
+        // session ended by server — update UI
+        setActiveSession(null);
+        setSubmittedCount(0);
+        if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
+        setLiveConnected(false);
       });
 
       es.onerror = (err) => {
@@ -160,16 +173,17 @@ export const FacultyDashboard: React.FC = () => {
   useEffect(() => {
     let timer: any;
     if (activeSession) {
-      const fetchCount = async () => {
+      const fetchSubmissions = async () => {
         try {
-          const records = await apiFetch<any[]>(`/api/attendance/session/${activeSession.id}`);
-          setSubmittedCount(records.length);
+          const res = await apiFetch<any>(`/api/attendance/submissions?sessionId=${activeSession.id}`);
+          const rows = Array.isArray(res.submissions) ? res.submissions : [];
+          setSubmittedCount(rows.length);
         } catch (error) {
-          console.error('Error fetching attendance count:', error);
+          console.error('Error fetching attendance submissions:', error);
         }
       };
-      fetchCount();
-      timer = setInterval(fetchCount, 3000);
+      fetchSubmissions();
+      timer = setInterval(fetchSubmissions, 3000);
     }
     return () => timer && clearInterval(timer);
   }, [activeSession]);
@@ -227,6 +241,24 @@ export const FacultyDashboard: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
+        {/* Button to open the dedicated submissions page */}
+        <div className="flex justify-end">
+          <button
+            onClick={() => {
+              // If we have an active session, include it in the query so the submissions page can auto-load
+              if (activeSession && activeSession.id) {
+                const url = `/faculty/attendance-submissions?sessionId=${activeSession.id}`;
+                history.pushState({}, '', url);
+              } else {
+                history.pushState({}, '', '/faculty/attendance-submissions');
+              }
+              setView('submissions');
+            }}
+            className="px-3 py-2 bg-indigo-600 text-white rounded-md"
+          >
+            View Submitted Attendance
+          </button>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -323,6 +355,7 @@ export const FacultyDashboard: React.FC = () => {
                     End Session
                   </button>
                 </div>
+                {/* Submissions moved to separate section below */}
               </div>
             )}
           </div>

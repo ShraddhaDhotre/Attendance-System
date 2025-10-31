@@ -3,6 +3,7 @@ import { Layout } from '../Layout';
 import { MapPin, Clock, CheckCircle, AlertCircle, BookOpen, Calendar, TrendingUp } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
+import StudentSubmissions from './StudentSubmissions';
 
 interface LocationState {
   latitude: number | null;
@@ -18,6 +19,7 @@ export const StudentDashboard: React.FC = () => {
   const [courses, setCourses] = useState<Array<{ id: number; code: string; name: string }>>([]);
   const [selectedCourseId, setSelectedCourseId] = useState<number | null>(null);
   const [recentAttendanceState, setRecentAttendanceState] = useState<Array<{ course: string; date: string; status: string; time: string }>>([]);
+  const [viewSubmissions, setViewSubmissions] = useState(false);
 
   useEffect(() => {
     // Fetch available courses (development-only public endpoint)
@@ -84,6 +86,9 @@ export const StudentDashboard: React.FC = () => {
       }
     })();
   }, [user]);
+
+  // Toggle to show student's own submissions page
+  const handleViewMySubmissions = () => setViewSubmissions(v => !v);
 
   const handleSubmitAttendance = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -222,6 +227,15 @@ export const StudentDashboard: React.FC = () => {
                 {submitting ? 'Submitting...' : 'Submit Attendance'}
               </button>
             </form>
+
+            <div className="mt-4">
+              <button onClick={handleViewMySubmissions} className="px-3 py-2 bg-indigo-600 text-white rounded-md">View My Submissions</button>
+            </div>
+            {viewSubmissions && (
+              <div className="mt-6">
+                <StudentSubmissions />
+              </div>
+            )}
 
             {/* Submission Result */}
             {lastSubmission && (
