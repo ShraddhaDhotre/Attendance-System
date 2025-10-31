@@ -1,33 +1,137 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Layout } from '../Layout';
 import { BookOpen, Users, Calendar, MapPin, Clock, QrCode, Eye } from 'lucide-react';
+import { apiFetch } from '../../utils/api';
+import { useAuth } from '../../contexts/AuthContext';
+
+interface Course {
+  id: number;
+  code: string;
+  name: string;
+  faculty: { name: string };
+  sessions: Array<{ id: number; class_code: string; is_active: boolean }>;
+}
+
+interface Session {
+  id: number;
+  class_code: string;
+  course: { code: string; name: string };
+  start_time: string;
+  lat: number;
+  lng: number;
+  attendance: Array<{ id: number; student_id: number }>;
+}
 
 export const FacultyDashboard: React.FC = () => {
-  const [activeSession, setActiveSession] = useState<string | null>(null);
-  const [classCode, setClassCode] = useState<string>('');
+  const { user } = useAuth();
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [activeSession, setActiveSession] = useState<Session | null>(null);
+  const [selectedCourseId, setSelectedCourseId] = useState<number | null>(null);
+  const [submittedCount, setSubmittedCount] = useState<number>(0);
+  const [lat, setLat] = useState<number | null>(null);
+  const [lng, setLng] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const generateClassCode = () => {
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    setClassCode(code);
-    setActiveSession('CS101-' + Date.now());
+  useEffect(() => {
+    // Get user's location
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        setLat(pos.coords.latitude);
+        setLng(pos.coords.longitude);
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [coursesData, sessionsData] = await Promise.all([
+          apiFetch<Course[]>('/api/courses'),
+          apiFetch<Session[]>('/api/sessions/active')
+        ]);
+        
+        setCourses(coursesData);
+        
+        // Find active session for this faculty
+        const myActiveSession = sessionsData.find(session => 
+          session.course && coursesData.some(course => course.id === session.course.id)
+        );
+        
+        if (myActiveSession) {
+          setActiveSession(myActiveSession);
+          setSubmittedCount(myActiveSession.attendance.length);
+        }
+      } catch (error) {
+        console.error('Error fetching data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  const startSession = async () => {
+    if (!selectedCourseId || lat == null || lng == null) return;
+    
+    try {
+      const session = await apiFetch<Session>('/api/sessions/start', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          courseId: selectedCourseId, 
+          lat, 
+          lng, 
+          radiusM: 50 
+        })
+      });
+      
+      setActiveSession(session);
+      setSubmittedCount(0);
+    } catch (error) {
+      console.error('Error starting session:', error);
+    }
   };
 
-  const endSession = () => {
-    setActiveSession(null);
-    setClassCode('');
+  const endSession = async () => {
+    if (!activeSession) return;
+    
+    try {
+      await apiFetch(`/api/sessions/end/${activeSession.id}`, { method: 'POST' });
+      setActiveSession(null);
+      setSubmittedCount(0);
+    } catch (error) {
+      console.error('Error ending session:', error);
+    }
   };
 
-  const courses = [
-    { code: 'CS 101', name: 'Introduction to Programming', students: 45, schedule: 'MWF 9:00 AM' },
-    { code: 'CS 201', name: 'Data Structures', students: 38, schedule: 'TTh 11:00 AM' },
-  ];
+  useEffect(() => {
+    let timer: any;
+    if (activeSession) {
+      const fetchCount = async () => {
+        try {
+          const records = await apiFetch<any[]>(`/api/attendance/session/${activeSession.id}`);
+          setSubmittedCount(records.length);
+        } catch (error) {
+          console.error('Error fetching attendance count:', error);
+        }
+      };
+      fetchCount();
+      timer = setInterval(fetchCount, 3000);
+    }
+    return () => timer && clearInterval(timer);
+  }, [activeSession]);
 
-  const recentAttendance = [
-    { course: 'CS 101', date: '2024-01-15', present: 42, total: 45, percentage: 93.3 },
-    { course: 'CS 201', date: '2024-01-15', present: 35, total: 38, percentage: 92.1 },
-    { course: 'CS 101', date: '2024-01-13', present: 43, total: 45, percentage: 95.6 },
-    { course: 'CS 201', date: '2024-01-12', present: 36, total: 38, percentage: 94.7 },
-  ];
+  if (loading) {
+    return (
+      <Layout title="Faculty Dashboard">
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        </div>
+      </Layout>
+    );
+  }
+
+  const totalStudents = courses.reduce((sum, course) => sum + (course.sessions?.length || 0), 0);
 
   return (
     <Layout title="Faculty Dashboard">
@@ -48,7 +152,7 @@ export const FacultyDashboard: React.FC = () => {
               <Users className="h-8 w-8 text-green-600" />
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Total Students</p>
-                <p className="text-2xl font-bold text-gray-900">{courses.reduce((sum, course) => sum + course.students, 0)}</p>
+                <p className="text-2xl font-bold text-gray-900">{totalStudents}</p>
               </div>
             </div>
           </div>
@@ -57,7 +161,7 @@ export const FacultyDashboard: React.FC = () => {
               <Calendar className="h-8 w-8 text-purple-600" />
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Classes Today</p>
-                <p className="text-2xl font-bold text-gray-900">3</p>
+                <p className="text-2xl font-bold text-gray-900">{courses.length}</p>
               </div>
             </div>
           </div>
@@ -65,8 +169,8 @@ export const FacultyDashboard: React.FC = () => {
             <div className="flex items-center">
               <Clock className="h-8 w-8 text-orange-600" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Avg. Attendance</p>
-                <p className="text-2xl font-bold text-gray-900">93.9%</p>
+                <p className="text-sm font-medium text-gray-600">Active Sessions</p>
+                <p className="text-2xl font-bold text-gray-900">{activeSession ? 1 : 0}</p>
               </div>
             </div>
           </div>
@@ -81,17 +185,22 @@ export const FacultyDashboard: React.FC = () => {
               <div className="text-center">
                 <QrCode className="h-16 w-16 text-gray-400 mx-auto mb-4" />
                 <p className="text-gray-600 mb-6">No active session</p>
-                <select className="w-full p-3 border border-gray-300 rounded-md mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <select 
+                  value={selectedCourseId ?? ''} 
+                  onChange={(e) => setSelectedCourseId(Number(e.target.value) || null)} 
+                  className="w-full p-3 border border-gray-300 rounded-md mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
                   <option value="">Select Course</option>
-                  {courses.map((course, index) => (
-                    <option key={index} value={course.code}>
+                  {courses.map((course) => (
+                    <option key={course.id} value={course.id}>
                       {course.code} - {course.name}
                     </option>
                   ))}
                 </select>
                 <button
-                  onClick={generateClassCode}
-                  className="w-full bg-blue-600 text-white py-3 px-4 rounded-md hover:bg-blue-700 transition-colors font-medium"
+                  onClick={startSession}
+                  disabled={!selectedCourseId || lat === null}
+                  className="w-full bg-blue-600 text-white py-3 px-4 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
                 >
                   Start Attendance Session
                 </button>
@@ -101,23 +210,23 @@ export const FacultyDashboard: React.FC = () => {
                 <div className="bg-blue-50 p-6 rounded-lg mb-6">
                   <h4 className="text-xl font-bold text-blue-900 mb-2">Class Code</h4>
                   <div className="text-4xl font-mono font-bold text-blue-600 tracking-wider">
-                    {classCode}
+                    {activeSession.class_code}
                   </div>
                   <p className="text-sm text-blue-700 mt-2">Share this code with students</p>
                 </div>
                 
                 <div className="flex items-center justify-center text-green-600 mb-4">
                   <MapPin className="h-5 w-5 mr-2" />
-                  <span className="text-sm">Location: Room A-101 (GPS Locked)</span>
+                  <span className="text-sm">GPS locked {lat?.toFixed(4)}, {lng?.toFixed(4)}</span>
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4 mb-6">
                   <div className="text-center">
-                    <p className="text-2xl font-bold text-gray-900">0</p>
+                    <p className="text-2xl font-bold text-gray-900">{submittedCount}</p>
                     <p className="text-sm text-gray-600">Submitted</p>
                   </div>
                   <div className="text-center">
-                    <p className="text-2xl font-bold text-gray-900">45</p>
+                    <p className="text-2xl font-bold text-gray-900">-</p>
                     <p className="text-sm text-gray-600">Expected</p>
                   </div>
                 </div>
@@ -141,18 +250,18 @@ export const FacultyDashboard: React.FC = () => {
           <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
             <h3 className="text-lg font-medium text-gray-900 mb-6">My Courses</h3>
             <div className="space-y-4">
-              {courses.map((course, index) => (
-                <div key={index} className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+              {courses.map((course) => (
+                <div key={course.id} className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
                   <div className="flex justify-between items-start">
                     <div>
                       <h4 className="font-medium text-gray-900">{course.code}</h4>
                       <p className="text-sm text-gray-600">{course.name}</p>
                       <div className="flex items-center mt-2 text-sm text-gray-500">
                         <Users className="h-4 w-4 mr-1" />
-                        <span>{course.students} students</span>
+                        <span>{course.sessions?.length || 0} sessions</span>
                         <span className="mx-2">•</span>
                         <Clock className="h-4 w-4 mr-1" />
-                        <span>{course.schedule}</span>
+                        <span>Fall 2024</span>
                       </div>
                     </div>
                     <button className="text-blue-600 hover:text-blue-800 transition-colors">
@@ -162,69 +271,6 @@ export const FacultyDashboard: React.FC = () => {
                 </div>
               ))}
             </div>
-          </div>
-        </div>
-
-        {/* Recent Attendance */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-          <div className="p-6 border-b border-gray-200">
-            <h3 className="text-lg font-medium text-gray-900">Recent Attendance</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Course
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Date
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Present
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Total
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Percentage
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {recentAttendance.map((record, index) => (
-                  <tr key={index} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {record.course}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {record.date}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {record.present}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {record.total}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        record.percentage >= 90 ? 'bg-green-100 text-green-800' : 
-                        record.percentage >= 80 ? 'bg-yellow-100 text-yellow-800' : 
-                        'bg-red-100 text-red-800'
-                      }`}>
-                        {record.percentage}%
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <button className="text-blue-600 hover:text-blue-900">View Details</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         </div>
       </div>

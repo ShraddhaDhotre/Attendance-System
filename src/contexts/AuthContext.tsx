@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { AuthContextType, User } from '../types';
+import { apiFetch } from '../utils/api';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -31,42 +32,39 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const login = async (email: string, password: string) => {
     setLoading(true);
     try {
-      // Simulate API call - in real app, this would be a Supabase auth call
-      const mockUsers: User[] = [
-        {
-          id: '1',
-          email: 'admin@university.edu',
-          name: 'System Administrator',
-          role: 'admin',
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: '2',
-          email: 'faculty@university.edu',
-          name: 'Dr. John Smith',
-          role: 'faculty',
-          faculty_id: 'FAC001',
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: '3',
-          email: 'student@university.edu',
-          name: 'Alice Johnson',
-          role: 'student',
-          student_id: 'STU001',
-          created_at: new Date().toISOString(),
-        },
-      ];
-
-      const foundUser = mockUsers.find(u => u.email === email);
-      if (!foundUser || password !== 'password123') {
-        throw new Error('Invalid credentials');
+      // Use centralized apiFetch which respects VITE_API_URL and includes token
+      let data: any;
+      try {
+        data = await apiFetch<any>('/api/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({ email, password }),
+        });
+      } catch (err) {
+        // attempt auto-register fallback for dev environments
+        try {
+          await apiFetch('/api/auth/register', {
+            method: 'POST',
+            body: JSON.stringify({ email, name: email, role: 'STUDENT', password }),
+          });
+          data = await apiFetch('/api/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ email, password }),
+          });
+        } catch (e) {
+          throw new Error('Invalid credentials');
+        }
       }
-
-      setUser(foundUser);
-      localStorage.setItem('user', JSON.stringify(foundUser));
-    } catch (error) {
-      throw error;
+  const backendUser = data.user as { id: number; email: string; name: string; role: 'ADMIN'|'FACULTY'|'STUDENT' };
+      const mapped: User = {
+        id: String(backendUser.id),
+        email: backendUser.email,
+        name: backendUser.name,
+        role: backendUser.role.toLowerCase() as User['role'],
+        created_at: new Date().toISOString(),
+      };
+      setUser(mapped);
+      localStorage.setItem('user', JSON.stringify(mapped));
+      localStorage.setItem('token', data.token);
     } finally {
       setLoading(false);
     }

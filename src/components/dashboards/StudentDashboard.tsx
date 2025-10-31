@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Layout } from '../Layout';
 import { MapPin, Clock, CheckCircle, AlertCircle, BookOpen, Calendar, TrendingUp } from 'lucide-react';
+import { apiFetch } from '../../utils/api';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface LocationState {
   latitude: number | null;
@@ -13,8 +15,24 @@ export const StudentDashboard: React.FC = () => {
   const [location, setLocation] = useState<LocationState>({ latitude: null, longitude: null, error: null });
   const [submitting, setSubmitting] = useState(false);
   const [lastSubmission, setLastSubmission] = useState<{ success: boolean; message: string } | null>(null);
+  const [courses, setCourses] = useState<Array<{ id: number; code: string; name: string }>>([]);
+  const [selectedCourseId, setSelectedCourseId] = useState<number | null>(null);
+  const [recentAttendanceState, setRecentAttendanceState] = useState<Array<{ course: string; date: string; status: string; time: string }>>([]);
 
   useEffect(() => {
+    // Fetch available courses (development-only public endpoint)
+    (async () => {
+      try {
+        const data = await apiFetch('/api/courses/public');
+        if (Array.isArray(data) && data.length) {
+          setCourses(data);
+          setSelectedCourseId(data[0].id);
+        }
+      } catch (err) {
+        console.warn('Failed to load courses:', err);
+      }
+    })();
+
     // Get user's location
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
@@ -42,36 +60,60 @@ export const StudentDashboard: React.FC = () => {
     }
   }, []);
 
+  // Load student's recent attendance when auth is available
+  const { user } = useAuth();
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const attendance = await apiFetch(`/api/attendance/student/${user.id}`);
+        if (Array.isArray(attendance)) {
+          setLastSubmission(null);
+          // Map attendance to recentAttendance display items
+          // Each item: { course, date, status, time }
+          const recent = attendance.slice(0, 10).map((rec: any) => ({
+            course: rec.session?.course?.code ?? 'Unknown',
+            date: new Date(rec.submitted_at).toLocaleDateString(),
+            status: rec.is_verified ? 'Present' : 'Unverified',
+            time: new Date(rec.submitted_at).toLocaleTimeString(),
+          }));
+          setRecentAttendanceState(recent);
+        }
+      } catch (err) {
+        console.warn('Failed to load attendance history', err);
+      }
+    })();
+  }, [user]);
+
   const handleSubmitAttendance = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!classCode.trim()) return;
 
     setSubmitting(true);
-    
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Mock validation
-    const isValidCode = classCode.toUpperCase() === 'ABC123';
-    const isLocationValid = location.latitude !== null && location.longitude !== null;
-    
-    if (isValidCode && isLocationValid) {
-      setLastSubmission({
-        success: true,
-        message: 'Attendance submitted successfully! Your presence has been recorded.',
+    try {
+      // Use selected course if available
+      const courseId = selectedCourseId ?? 1; // fallback to 1 for development
+      
+      await apiFetch('/api/attendance/submit', {
+        method: 'POST',
+        body: JSON.stringify({
+          courseId,
+          classCode: classCode.trim().toUpperCase(),
+          lat: location.latitude,
+          lng: location.longitude,
+          deviceInfo: navigator.userAgent
+        })
       });
-    } else if (!isValidCode) {
-      setLastSubmission({
-        success: false,
-        message: 'Invalid class code. Please check with your instructor.',
-      });
-    } else {
-      setLastSubmission({
-        success: false,
-        message: 'Location verification failed. Please ensure you are in the classroom.',
-      });
+      
+      setLastSubmission({ success: true, message: 'Attendance submitted successfully! Your presence has been recorded.' });
+    } catch (err: any) {
+      const errorMessage = err.message || 'Unknown error occurred';
+      const msg = errorMessage.includes('Invalid') ? 'Invalid class code. Please check with your instructor.' : 
+                  errorMessage.includes('Location') ? 'Location verification failed. Please ensure you are in the classroom.' :
+                  errorMessage.includes('already') ? 'Attendance already submitted for this session.' :
+                  'Failed to submit attendance. Please try again.';
+      setLastSubmission({ success: false, message: msg });
     }
-    
     setSubmitting(false);
     setClassCode('');
     
@@ -79,24 +121,21 @@ export const StudentDashboard: React.FC = () => {
     setTimeout(() => setLastSubmission(null), 5000);
   };
 
-  const enrolledCourses = [
-    { code: 'CS 101', name: 'Introduction to Java Programming', instructor: 'Prof. Jalinder Gandal ', schedule: 'MWF 9:00 AM', attendance: 92 },
-    { code: 'CS 201', name: 'Data Structures', instructor: 'Prof. Swapnil Goje', schedule: 'TTh 11:00 AM', attendance: 88 },
-    { code: 'CS 301', name: 'Internet Of Things', instructor: 'Prof. Geeta Mete', schedule: 'MWF 2:00 PM', attendance: 95 },
-  ];
+  // Render enrolled courses from available courses (enrollment model not implemented yet)
+  const enrolledCourses = courses.map((c) => ({
+    code: c.code,
+    name: c.name,
+    instructor: '',
+    schedule: 'TBD',
+    attendance: 0,
+  }));
 
-  const recentAttendance = [
-    { course: 'CS 101', date: '2024-01-15', status: 'Present', time: '9:05 AM' },
-    { course: 'CS 201', date: '2024-01-14', status: 'Present', time: '11:02 AM' },
-    { course: 'CS 301', date: '2024-01-13', status: 'Present', time: '2:01 PM' },
-    { course: 'CS 101', date: '2024-01-13', status: 'Absent', time: '-' },
-    { course: 'CS 201', date: '2024-01-12', status: 'Present', time: '11:03 AM' },
-  ];
+  const recentAttendance = recentAttendanceState;
 
   const stats = [
-    { label: 'Overall Attendance', value: '91.7%', icon: TrendingUp, color: 'bg-green-500' },
-    { label: 'Enrolled Courses', value: '3', icon: BookOpen, color: 'bg-blue-500' },
-    { label: 'Classes This Week', value: '8', icon: Calendar, color: 'bg-purple-500' },
+    { label: 'Overall Attendance', value: recentAttendanceState.length ? `${Math.round((recentAttendanceState.filter(r=>r.status==='Present').length / recentAttendanceState.length) * 100)}%` : '—', icon: TrendingUp, color: 'bg-green-500' },
+    { label: 'Enrolled Courses', value: String(enrolledCourses.length || '—'), icon: BookOpen, color: 'bg-blue-500' },
+    { label: 'Classes This Week', value: '—', icon: Calendar, color: 'bg-purple-500' },
   ];
 
   return (
@@ -129,7 +168,19 @@ export const StudentDashboard: React.FC = () => {
                 <label htmlFor="classCode" className="block text-sm font-medium text-gray-700 mb-2">
                   Class Code
                 </label>
-                <input
+                  <div className="flex space-x-2">
+                    <select
+                      value={selectedCourseId ?? ''}
+                      onChange={(e) => setSelectedCourseId(Number(e.target.value))}
+                      className="px-3 py-2 border border-gray-300 rounded-md bg-white"
+                    >
+                      {courses.length === 0 && <option value="">Select course</option>}
+                      {courses.map((c) => (
+                        <option key={c.id} value={c.id}>{c.code} — {c.name}</option>
+                      ))}
+                    </select>
+
+                    <input
                   type="text"
                   id="classCode"
                   value={classCode}
@@ -138,6 +189,7 @@ export const StudentDashboard: React.FC = () => {
                   className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-center text-lg font-mono uppercase"
                   maxLength={6}
                 />
+                  </div>
               </div>
 
               {/* Location Status */}

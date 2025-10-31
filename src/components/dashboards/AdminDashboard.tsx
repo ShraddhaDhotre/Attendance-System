@@ -1,36 +1,208 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Layout } from '../Layout';
-import { Users, BookOpen, TrendingUp, Calendar, Plus, Search, Filter } from 'lucide-react';
+import { Users, BookOpen, TrendingUp, Plus, Search, X } from 'lucide-react';
+import { apiFetch } from '../../utils/api';
+
+interface Course {
+  id: number;
+  code: string;
+  name: string;
+  faculty_id: number;
+  faculty?: { id: number; name: string; email: string } | null;
+  semester: string;
+  created_at: string;
+}
+
+interface UserSummary {
+  id: number;
+  email: string;
+  name: string;
+  role: 'ADMIN' | 'FACULTY' | 'STUDENT';
+}
 
 export const AdminDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState('overview');
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [faculties, setFaculties] = useState<UserSummary[]>([]);
+  const [stats, setStats] = useState({
+    students: 0,
+    courses: 0,
+    faculty: 0,
+    avgAttendance: 0
+  });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showAddCourseModal, setShowAddCourseModal] = useState(false);
+  const [showAddFacultyModal, setShowAddFacultyModal] = useState(false);
+  const [showAddStudentModal, setShowAddStudentModal] = useState(false);
+  const [newCourse, setNewCourse] = useState({
+    code: '',
+    name: '',
+    faculty_id: '',
+    semester: ''
+  });
+  const [newUser, setNewUser] = useState({ email: '', name: '', password: '' });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const stats = [
-    { label: 'Total Students', value: '1,247', change: '+12%', icon: Users, color: 'bg-blue-500' },
-    { label: 'Active Courses', value: '34', change: '+3%', icon: BookOpen, color: 'bg-green-500' },
-    { label: 'Faculty Members', value: '28', change: '+2%', icon: Users, color: 'bg-purple-500' },
-    { label: 'Avg. Attendance', value: '87.3%', change: '+5.2%', icon: TrendingUp, color: 'bg-orange-500' },
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // Fetch courses
+        const coursesResponse = await apiFetch('/api/courses');
+        const coursesData = coursesResponse as Course[];
+        setCourses(coursesData);
+
+        // Fetch users (debug route) and filter faculties
+        const usersResponse = await apiFetch('/api/auth/debug');
+        const users = usersResponse as UserSummary[];
+        const facultyList = users.filter(u => u.role === 'FACULTY');
+        setFaculties(facultyList);
+
+        // Calculate stats
+        const uniqueStudents = new Set<number>();
+        const uniqueFaculty = new Set<number>();
+        let totalAttendance = 0;
+        let sessionCount = 0;
+
+        coursesData.forEach(course => {
+          if (course.faculty) uniqueFaculty.add(course.faculty.id);
+        });
+
+        setStats({
+          students: uniqueStudents.size || 0,
+          courses: coursesData.length,
+          faculty: uniqueFaculty.size,
+          avgAttendance: sessionCount ? (totalAttendance / sessionCount * 100) : 0
+        });
+      } catch (err: any) {
+        setError(err.message || 'Failed to load dashboard data');
+        console.error('Error fetching dashboard data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  const handleAddCourse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const response = await apiFetch('/api/courses', {
+        method: 'POST',
+        body: JSON.stringify({
+          code: newCourse.code,
+          name: newCourse.name,
+          faculty_id: parseInt(newCourse.faculty_id, 10),
+          semester: newCourse.semester,
+        })
+      });
+      
+      const created = response as Course;
+      setCourses([created, ...courses]);
+      setShowAddCourseModal(false);
+      setNewCourse({ code: '', name: '', faculty_id: '', semester: '' });
+    } catch (err: any) {
+      setError(err.message || 'Failed to add course');
+      setTimeout(() => setError(null), 5000);
+    }
+  };
+
+  const handleAddUser = async (role: 'FACULTY' | 'STUDENT') => {
+    try {
+      await apiFetch('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: newUser.email,
+          name: newUser.name,
+          password: newUser.password,
+          role
+        })
+      });
+
+      // Refresh users/faculties list
+      const usersResponse = await apiFetch('/api/auth/debug');
+      const users = usersResponse as UserSummary[];
+      setFaculties(users.filter(u => u.role === 'FACULTY'));
+
+      setShowAddFacultyModal(false);
+      setShowAddStudentModal(false);
+      setNewUser({ email: '', name: '', password: '' });
+    } catch (err: any) {
+      setError(err.message || 'Failed to add user');
+      setTimeout(() => setError(null), 5000);
+    }
+  };
+
+  const handleEditCourse = async (course: Course) => {
+    // TODO: Implement edit functionality (open modal, send PUT)
+    console.log('Edit course (not implemented):', course);
+  };
+
+  const handleDeleteCourse = async (courseId: number) => {
+    if (!window.confirm('Are you sure you want to delete this course?')) return;
+    
+    try {
+      await apiFetch(`/api/courses/${courseId}`, { method: 'DELETE' });
+      setCourses(courses.filter(c => c.id !== courseId));
+    } catch (err: any) {
+      setError(err.message || 'Failed to delete course');
+      setTimeout(() => setError(null), 5000);
+    }
+  };
+
+  // Map stats for display
+  const statCards = [
+    { label: 'Total Students', value: stats.students.toString(), change: '', icon: Users, color: 'bg-blue-500' },
+    { label: 'Active Courses', value: stats.courses.toString(), change: '', icon: BookOpen, color: 'bg-green-500' },
+    { label: 'Faculty Members', value: stats.faculty.toString(), change: '', icon: Users, color: 'bg-purple-500' },
+    { label: 'Avg. Attendance', value: `${stats.avgAttendance.toFixed(1)}%`, change: '', icon: TrendingUp, color: 'bg-orange-500' },
   ];
 
-  const recentActivities = [
-    { action: 'New course created', details: 'CS 401 - Advanced Algorithms', time: '2 hours ago', type: 'course' },
-    { action: 'Faculty added', details: 'Dr. Sarah Wilson joined Mathematics Dept', time: '4 hours ago', type: 'faculty' },
-    { action: 'Student enrolled', details: 'John Doe enrolled in Physics 201', time: '6 hours ago', type: 'student' },
-    { action: 'Attendance report generated', details: 'CS 301 - Weekly Report', time: '1 day ago', type: 'report' },
-  ];
+  // Build recent activities from real data (courses and faculty list)
+  const recentActivities = React.useMemo(() => {
+    const acts: Array<{ action: string; details: string; time: string; type: string }> = [];
+
+    // Most recent courses
+    courses.slice(0, 6).forEach((c) => {
+      acts.push({ action: 'Course created', details: `${c.code} — ${c.name}`, time: new Date(c.created_at).toLocaleString(), type: 'course' });
+    });
+
+    // Recent faculty additions
+    faculties.slice(0, 4).forEach((f) => {
+      acts.push({ action: 'Faculty added', details: `${f.name} (${f.email})`, time: 'recent', type: 'faculty' });
+    });
+
+    // Limit and return
+    return acts.slice(0, 6);
+  }, [courses, faculties]);
 
   return (
     <Layout title="Admin Dashboard">
       <div className="space-y-8">
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <span className="ml-3 text-gray-600">Loading dashboard data...</span>
+          </div>
+        ) : error ? (
+          <div className="bg-red-50 text-red-800 p-4 rounded-md flex items-center space-x-2">
+            <X className="h-5 w-5" />
+            <span>{error}</span>
+          </div>
+        ) : null}
+
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {stats.map((stat, index) => (
+          {statCards.map((stat, index) => (
             <div key={index} className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600">{stat.label}</p>
                   <p className="text-3xl font-bold text-gray-900 mt-2">{stat.value}</p>
-                  <p className="text-sm text-green-600 mt-2">{stat.change} from last month</p>
+                  {stat.change && (
+                    <p className="text-sm text-green-600 mt-2">{stat.change} from last month</p>
+                  )}
                 </div>
                 <div className={`${stat.color} p-3 rounded-lg`}>
                   <stat.icon className="h-6 w-6 text-white" />
@@ -92,17 +264,17 @@ export const AdminDashboard: React.FC = () => {
             <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
               <h3 className="text-lg font-medium text-gray-900 mb-6">Quick Actions</h3>
               <div className="grid grid-cols-2 gap-4">
-                <button className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left">
+                <button onClick={() => setShowAddCourseModal(true)} className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left">
                   <Plus className="h-6 w-6 text-blue-600 mb-2" />
                   <h4 className="font-medium text-gray-900">Add Course</h4>
                   <p className="text-sm text-gray-600">Create new course</p>
                 </button>
-                <button className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left">
+                <button onClick={() => setShowAddFacultyModal(true)} className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left">
                   <Users className="h-6 w-6 text-green-600 mb-2" />
                   <h4 className="font-medium text-gray-900">Add Faculty</h4>
                   <p className="text-sm text-gray-600">Register new faculty</p>
                 </button>
-                <button className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left">
+                <button onClick={() => setShowAddStudentModal(true)} className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left">
                   <Users className="h-6 w-6 text-purple-600 mb-2" />
                   <h4 className="font-medium text-gray-900">Add Student</h4>
                   <p className="text-sm text-gray-600">Register new student</p>
@@ -117,12 +289,15 @@ export const AdminDashboard: React.FC = () => {
           </div>
         )}
 
-        {activeTab === 'courses' && (
+                    {activeTab === 'courses' && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <div className="p-6 border-b border-gray-200">
               <div className="flex justify-between items-center">
                 <h3 className="text-lg font-medium text-gray-900">Course Management</h3>
-                <button className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors flex items-center">
+                <button 
+                  onClick={() => setShowAddCourseModal(true)}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors flex items-center"
+                >
                   <Plus className="h-4 w-4 mr-2" />
                   Add Course
                 </button>
@@ -134,14 +309,12 @@ export const AdminDashboard: React.FC = () => {
                     <input
                       type="text"
                       placeholder="Search courses..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
                       className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                 </div>
-                <button className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors flex items-center">
-                  <Filter className="h-4 w-4 mr-2" />
-                  Filter
-                </button>
               </div>
             </div>
             <div className="p-6">
@@ -156,10 +329,10 @@ export const AdminDashboard: React.FC = () => {
                         Faculty
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Students
+                        Semester
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Status
+                        Created
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Actions
@@ -167,38 +340,210 @@ export const AdminDashboard: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {[
-                      { code: 'CS 101', name: 'Introduction to Programming', faculty: 'Dr. John Smith', students: 45, status: 'Active' },
-                      { code: 'CS 201', name: 'Data Structures', faculty: 'Dr. Jane Doe', students: 38, status: 'Active' },
-                      { code: 'CS 301', name: 'Database Systems', faculty: 'Dr. Mike Johnson', students: 42, status: 'Active' },
-                    ].map((course, index) => (
-                      <tr key={index} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">{course.code}</div>
-                            <div className="text-sm text-gray-500">{course.name}</div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {course.faculty}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {course.students} enrolled
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                            {course.status}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <button className="text-blue-600 hover:text-blue-900 mr-3">Edit</button>
-                          <button className="text-red-600 hover:text-red-900">Delete</button>
-                        </td>
-                      </tr>
+                    {courses
+                      .filter(course => 
+                        course.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                        course.name.toLowerCase().includes(searchQuery.toLowerCase())
+                      )
+                      .map((course) => (
+                        <tr key={course.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div>
+                              <div className="text-sm font-medium text-gray-900">{course.code}</div>
+                              <div className="text-sm text-gray-500">{course.name}</div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {course.faculty?.name || 'Unassigned'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {course.semester}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {new Date(course.created_at).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <button 
+                              onClick={() => handleEditCourse(course)}
+                              className="text-blue-600 hover:text-blue-900 mr-3"
+                            >
+                              Edit
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteCourse(course.id)}
+                              className="text-red-600 hover:text-red-900"
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Add Course Modal */}
+        {showAddCourseModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg w-full max-w-md p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-medium text-gray-900">Add New Course</h3>
+                <button onClick={() => setShowAddCourseModal(false)} className="text-gray-400 hover:text-gray-500">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              
+              <form onSubmit={handleAddCourse} className="space-y-4">
+                <div>
+                  <label htmlFor="code" className="block text-sm font-medium text-gray-700 mb-1">Course Code</label>
+                  <input
+                    id="code"
+                    type="text"
+                    value={newCourse.code}
+                    onChange={(e) => setNewCourse({...newCourse, code: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="e.g., CS101"
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">Course Name</label>
+                  <input
+                    id="name"
+                    type="text"
+                    value={newCourse.name}
+                    onChange={(e) => setNewCourse({...newCourse, name: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="e.g., Introduction to Programming"
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <label htmlFor="faculty_id" className="block text-sm font-medium text-gray-700 mb-1">Faculty</label>
+                  {faculties.length > 0 ? (
+                    <select
+                      id="faculty_id"
+                      value={newCourse.faculty_id}
+                      onChange={(e) => setNewCourse({...newCourse, faculty_id: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white"
+                      required
+                    >
+                      <option value="">Select faculty</option>
+                      {faculties.map(f => (
+                        <option key={f.id} value={String(f.id)}>{f.name} — {f.email} (id: {f.id})</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      id="faculty_id"
+                      type="text"
+                      value={newCourse.faculty_id}
+                      onChange={(e) => setNewCourse({...newCourse, faculty_id: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                      placeholder="Faculty ID number (no faculty list available)"
+                      required
+                    />
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">Enter the faculty's database ID or choose from the list. Faculty ID is a number.</p>
+                </div>
+                
+                <div>
+                  <label htmlFor="semester" className="block text-sm font-medium text-gray-700 mb-1">Semester</label>
+                  <input
+                    id="semester"
+                    type="text"
+                    value={newCourse.semester}
+                    onChange={(e) => setNewCourse({...newCourse, semester: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="e.g., Fall 2025"
+                    required
+                  />
+                </div>
+                
+                <div className="flex justify-end space-x-3 mt-6">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCourseModal(false)}
+                    className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                  >
+                    Add Course
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+        {/* Add Faculty Modal */}
+        {showAddFacultyModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg w-full max-w-md p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-medium text-gray-900">Register Faculty</h3>
+                <button onClick={() => setShowAddFacultyModal(false)} className="text-gray-400 hover:text-gray-500">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <form onSubmit={(e) => { e.preventDefault(); handleAddUser('FACULTY'); }} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Full name</label>
+                  <input value={newUser.name} onChange={(e) => setNewUser({...newUser, name: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-md" required />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input type="email" value={newUser.email} onChange={(e) => setNewUser({...newUser, email: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-md" required />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                  <input type="password" value={newUser.password} onChange={(e) => setNewUser({...newUser, password: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-md" required />
+                </div>
+                <div className="flex justify-end space-x-3 mt-6">
+                  <button type="button" onClick={() => setShowAddFacultyModal(false)} className="px-4 py-2 border border-gray-300 rounded-md">Cancel</button>
+                  <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded-md">Register</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Add Student Modal */}
+        {showAddStudentModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg w-full max-w-md p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-medium text-gray-900">Register Student</h3>
+                <button onClick={() => setShowAddStudentModal(false)} className="text-gray-400 hover:text-gray-500">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <form onSubmit={(e) => { e.preventDefault(); handleAddUser('STUDENT'); }} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Full name</label>
+                  <input value={newUser.name} onChange={(e) => setNewUser({...newUser, name: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-md" required />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input type="email" value={newUser.email} onChange={(e) => setNewUser({...newUser, email: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-md" required />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                  <input type="password" value={newUser.password} onChange={(e) => setNewUser({...newUser, password: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-md" required />
+                </div>
+                <div className="flex justify-end space-x-3 mt-6">
+                  <button type="button" onClick={() => setShowAddStudentModal(false)} className="px-4 py-2 border border-gray-300 rounded-md">Cancel</button>
+                  <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded-md">Register</button>
+                </div>
+              </form>
             </div>
           </div>
         )}

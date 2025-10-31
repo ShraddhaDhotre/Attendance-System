@@ -20,9 +20,9 @@ export const LoginForm: React.FC = () => {
   };
 
   const demoAccounts = [
-    { email: 'admin@university.edu', role: 'Admin', color: 'text-purple-600' },
-    { email: 'faculty@university.edu', role: 'Faculty', color: 'text-blue-600' },
-    { email: 'student@university.edu', role: 'Student', color: 'text-green-600' },
+    { email: 'admin@ae.test', password: 'admin123', role: 'Admin', color: 'text-purple-600' },
+    { email: 'faculty@ae.test', password: 'faculty123', role: 'Faculty', color: 'text-blue-600' },
+    { email: 'student@ae.test', password: 'student123', role: 'Student', color: 'text-green-600' },
   ];
 
   return (
@@ -105,7 +105,7 @@ export const LoginForm: React.FC = () => {
                     key={account.email}
                     onClick={() => {
                       setEmail(account.email);
-                      setPassword('password123');
+                      setPassword(account.password);
                     }}
                     className="w-full text-left p-3 rounded-md hover:bg-gray-50 border border-gray-200 transition-colors"
                   >
@@ -116,7 +116,7 @@ export const LoginForm: React.FC = () => {
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-gray-500 mt-2">Password: password123</p>
+              <p className="text-xs text-gray-500 mt-2">Use the prefilled password per account.</p>
             </div>
           </div>
         </div>

@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  FACULTY
+  STUDENT
+}
+
+model users {
+  id          Int      @id @default(autoincrement())
+  email       String   @unique
+  name        String
+  role        Role
+  password    String
+  created_at  DateTime @default(now())
+  
+  // Relations
+  courses     courses[]
+  sessions    class_sessions[]
+  attendance  attendance_records[]
+}
+
+model courses {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  name        String
+  faculty_id  Int
+  semester    String
+  created_at  DateTime @default(now())
+  
+  // Relations
+  faculty     users     @relation(fields: [faculty_id], references: [id], onDelete: Cascade)
+  sessions    class_sessions[]
+}
+
+model class_sessions {
+  id              Int      @id @default(autoincrement())
+  course_id       Int
+  class_code      String   @unique
+  start_time      DateTime
+  end_time        DateTime?
+  lat             Float
+  lng             Float
+  radius_m        Int      @default(50)
+  is_active       Boolean  @default(true)
+  created_by      Int
+  created_at      DateTime @default(now())
+  
+  // Relations
+  course          courses            @relation(fields: [course_id], references: [id], onDelete: Cascade)
+  faculty         users              @relation(fields: [created_by], references: [id])
+  attendance      attendance_records[]
+}
+
+model attendance_records {
+  id              Int      @id @default(autoincrement())
+  session_id      Int
+  student_id      Int
+  submitted_at    DateTime @default(now())
+  lat             Float
+  lng             Float
+  is_verified     Boolean  @default(false)
+  device_info     String?
+  
+  // Relations
+  session         class_sessions @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  student         users          @relation(fields: [student_id], references: [id], onDelete: Cascade)
+  
+  @@unique([session_id, student_id])
+}
